@@ -25,3 +25,7 @@ android {
         jvmTarget = "17"
     }
 }
+
+dependencies {
+    implementation("be.tarsos.dsp:core:2.5")
+}
