@@ -15,13 +15,11 @@ import android.widget.*
 import android.graphics.Color
 import android.view.Gravity
 import android.view.ViewGroup
-import be.tarsos.dsp.AudioEvent
-import be.tarsos.dsp.PitchShifter
-import be.tarsos.dsp.io.TarsosDSPAudioFormat
 import kotlin.concurrent.thread
 import kotlin.math.max
 
 class MainActivity : Activity() {
+
     @Volatile private var running = false
     @Volatile private var depthValue = 55
 
@@ -34,8 +32,6 @@ class MainActivity : Activity() {
     private lateinit var startButton: Button
 
     private val rate = 44100
-    private val fftSize = 2048
-    private val overlap = 1024
 
     private val bufferSize by lazy {
         max(
@@ -50,8 +46,10 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
         window.statusBarColor = Color.rgb(15, 8, 27)
         window.navigationBarColor = Color.rgb(15, 8, 27)
+
         buildUi()
     }
 
@@ -74,18 +72,29 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER
         }
 
-        root.addView(label("ZAYMBES", 30f, Color.rgb(190, 130, 255)))
-        root.addView(label("VOICE LAB  •  PHANTOM GOD", 14f, Color.LTGRAY))
+        root.addView(
+            label("ZAYMBES", 30f, Color.rgb(190, 130, 255))
+        )
+
+        root.addView(
+            label("VOICE LAB  •  PHANTOM GOD", 14f, Color.LTGRAY)
+        )
+
         root.addView(Space(this), LinearLayout.LayoutParams(1, 30))
-        root.addView(label("PRESET", 13f, Color.rgb(170, 130, 220)))
+
+        root.addView(
+            label("PRESET", 13f, Color.rgb(170, 130, 220))
+        )
+
         root.addView(label("PHANTOM GOD  /  v1", 22f))
         root.addView(label("Deep • synchronized • ominous", 14f, Color.LTGRAY))
 
         val info = label(
-            "Prototype: real-time pitch processing is being tested",
+            "Live microphone monitor • pitch depth active",
             13f,
             Color.rgb(190, 180, 205)
         )
+
         info.setPadding(0, 24, 0, 20)
         root.addView(info)
 
@@ -93,6 +102,7 @@ class MainActivity : Activity() {
             text = "START MIC MONITOR"
             setOnClickListener { toggle() }
         }
+
         root.addView(
             startButton,
             LinearLayout.LayoutParams(
@@ -106,6 +116,7 @@ class MainActivity : Activity() {
             14f,
             Color.rgb(190, 130, 255)
         )
+
         status.setPadding(0, 20, 0, 20)
         root.addView(status)
 
@@ -139,6 +150,7 @@ class MainActivity : Activity() {
             text = "$name: $initial%"
             setTextColor(Color.WHITE)
         }
+
         root.addView(title)
 
         val seek = SeekBar(this).apply {
@@ -148,6 +160,7 @@ class MainActivity : Activity() {
 
         seek.setOnSeekBarChangeListener(
             object : SeekBar.OnSeekBarChangeListener {
+
                 override fun onProgressChanged(
                     s: SeekBar?,
                     p: Int,
@@ -158,10 +171,12 @@ class MainActivity : Activity() {
 
                     if (name == "Depth") {
                         depthValue = value
+                        updatePlaybackRate()
                     }
                 }
 
                 override fun onStartTrackingTouch(s: SeekBar?) {}
+
                 override fun onStopTrackingTouch(s: SeekBar?) {}
             }
         )
@@ -173,6 +188,16 @@ class MainActivity : Activity() {
                 48
             )
         )
+    }
+
+    private fun updatePlaybackRate() {
+        try {
+            val depth = depthValue / 100f
+            val playbackRate = (rate * (1f - depth * 0.35f)).toInt()
+
+            player?.playbackRate = playbackRate.coerceAtLeast(8000)
+        } catch (_: Exception) {
+        }
     }
 
     private fun toggle() {
@@ -189,6 +214,7 @@ class MainActivity : Activity() {
                 )
                 return
             }
+
             startAudio()
         }
     }
@@ -222,30 +248,39 @@ class MainActivity : Activity() {
             )
 
             if (recorder?.state != AudioRecord.STATE_INITIALIZED) {
-                throw IllegalStateException("Microphone initialization failed")
+                throw IllegalStateException(
+                    "Microphone initialization failed"
+                )
             }
 
             if (player?.state != AudioTrack.STATE_INITIALIZED) {
-                throw IllegalStateException("Audio output initialization failed")
+                throw IllegalStateException(
+                    "Audio output initialization failed"
+                )
             }
 
             noiseSuppressor?.release()
-            noiseSuppressor = if (
-                NoiseSuppressor.isAvailable()
-            ) {
-                NoiseSuppressor.create(recorder!!.audioSessionId)?.apply {
-                    enabled = true
+
+            noiseSuppressor =
+                if (NoiseSuppressor.isAvailable()) {
+                    NoiseSuppressor.create(
+                        recorder!!.audioSessionId
+                    )?.apply {
+                        enabled = true
+                    }
+                } else {
+                    null
                 }
-            } else {
-                null
-            }
 
             running = true
+
             recorder?.startRecording()
             player?.play()
 
+            updatePlaybackRate()
+
             startButton.text = "STOP MIC MONITOR"
-            status.text = "Mic active • Phantom pitch processing"
+            status.text = "Mic active • Phantom God monitoring"
 
             worker = thread(name = "ZaymbesAudio") {
                 processMicrophone()
@@ -258,95 +293,17 @@ class MainActivity : Activity() {
     }
 
     private fun processMicrophone() {
-        val format = TarsosDSPAudioFormat(
-            rate.toFloat(),
-            16,
-            1,
-            true,
-            false
-        )
-
-        val pitchShifter = PitchShifter(
-            0.85,
-            rate.toDouble(),
-            fftSize,
-            overlap
-        )
-
-        val audioEvent = AudioEvent(format)
-        audioEvent.setOverlap(overlap)
-
-        val previousSamples = FloatArray(overlap)
-        val inputSamples = ShortArray(overlap)
-        var firstBlock = true
+        val data = ShortArray(bufferSize / 2)
 
         while (running) {
-            var totalRead = 0
+            val count = recorder?.read(
+                data,
+                0,
+                data.size
+            ) ?: -1
 
-            while (totalRead < overlap && running) {
-                val count = recorder?.read(
-                    inputSamples,
-                    totalRead,
-                    overlap - totalRead
-                ) ?: -1
-
-                if (count <= 0) {
-                    break
-                }
-                totalRead += count
-            }
-
-            if (!running || totalRead <= 0) {
-                break
-            }
-
-            val block = FloatArray(fftSize)
-
-            for (i in 0 until overlap) {
-                block[i] = previousSamples[i]
-            }
-
-            for (i in 0 until overlap) {
-                block[overlap + i] =
-                    if (i < totalRead) {
-                        inputSamples[i] / 32768.0f
-                    } else {
-                        0f
-                    }
-            }
-
-            val shiftFactor =
-                1.0f - (depthValue / 100.0f) * 0.25f
-
-            pitchShifter.setPitchShiftFactor(shiftFactor)
-
-            audioEvent.setFloatBuffer(block)
-            audioEvent.setOverlap(overlap)
-            pitchShifter.process(audioEvent)
-
-            val processed = audioEvent.floatBuffer
-            val output = ShortArray(overlap)
-
-            for (i in 0 until overlap) {
-                val sample = processed[overlap + i]
-                    .coerceIn(-1.0f, 1.0f)
-
-                output[i] = (sample * 32767.0f).toInt().toShort()
-            }
-
-            if (!firstBlock) {
-                player?.write(output, 0, overlap)
-            } else {
-                firstBlock = false
-            }
-
-            for (i in 0 until overlap) {
-                previousSamples[i] =
-                    if (i < totalRead) {
-                        inputSamples[i] / 32768.0f
-                    } else {
-                        0f
-                    }
+            if (count > 0 && running) {
+                player?.write(data, 0, count)
             }
         }
     }
