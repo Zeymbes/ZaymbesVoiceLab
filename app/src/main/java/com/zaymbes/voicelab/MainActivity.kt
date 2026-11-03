@@ -15,22 +15,27 @@ import android.widget.*
 import android.graphics.Color
 import android.view.Gravity
 import android.view.ViewGroup
+import be.tarsos.dsp.AudioEvent
+import be.tarsos.dsp.PitchShifter
+import be.tarsos.dsp.io.TarsosDSPAudioFormat
 import kotlin.concurrent.thread
 import kotlin.math.max
 
 class MainActivity : Activity() {
+    @Volatile private var running = false
+    @Volatile private var depthValue = 55
 
-    private var running = false
     private var recorder: AudioRecord? = null
     private var player: AudioTrack? = null
-    private var worker: Thread? = null
     private var noiseSuppressor: NoiseSuppressor? = null
+    private var worker: Thread? = null
 
     private lateinit var status: TextView
     private lateinit var startButton: Button
 
     private val rate = 44100
-    private var depthValue = 55
+    private val fftSize = 2048
+    private val overlap = 1024
 
     private val bufferSize by lazy {
         max(
@@ -58,13 +63,16 @@ class MainActivity : Activity() {
             setBackgroundColor(Color.rgb(15, 8, 27))
         }
 
-        fun label(text: String, size: Float, color: Int = Color.WHITE) =
-            TextView(this).apply {
-                this.text = text
-                textSize = size
-                setTextColor(color)
-                gravity = Gravity.CENTER
-            }
+        fun label(
+            text: String,
+            size: Float,
+            color: Int = Color.WHITE
+        ) = TextView(this).apply {
+            this.text = text
+            textSize = size
+            setTextColor(color)
+            gravity = Gravity.CENTER
+        }
 
         root.addView(label("ZAYMBES", 30f, Color.rgb(190, 130, 255)))
         root.addView(label("VOICE LAB  •  PHANTOM GOD", 14f, Color.LTGRAY))
@@ -74,7 +82,7 @@ class MainActivity : Activity() {
         root.addView(label("Deep • synchronized • ominous", 14f, Color.LTGRAY))
 
         val info = label(
-            "Live mic monitor • pitch depth • noise suppression",
+            "Prototype: real-time pitch processing is being tested",
             13f,
             Color.rgb(190, 180, 205)
         )
@@ -85,25 +93,27 @@ class MainActivity : Activity() {
             text = "START MIC MONITOR"
             setOnClickListener { toggle() }
         }
-
         root.addView(
             startButton,
             LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, 58
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                58
             )
         )
 
-        status = label("Microphone stopped", 14f, Color.rgb(190, 130, 255))
+        status = label(
+            "Microphone stopped",
+            14f,
+            Color.rgb(190, 130, 255)
+        )
         status.setPadding(0, 20, 0, 20)
         root.addView(status)
 
-        root.addView(label("VOICE CONTROLS", 15f, Color.rgb(190, 130, 255)))
+        root.addView(
+            label("VOICE CONTROLS", 15f, Color.rgb(190, 130, 255))
+        )
 
-        addSlider(root, "Depth", 0, 100, 55) {
-            depthValue = it
-            applyDepth()
-        }
-
+        addSlider(root, "Depth", 0, 100, 55)
         addSlider(root, "Phantom resonance", 0, 100, 25)
         addSlider(root, "Layer blend", 0, 100, 50)
 
@@ -123,14 +133,12 @@ class MainActivity : Activity() {
         name: String,
         min: Int,
         max: Int,
-        initial: Int,
-        onValueChanged: ((Int) -> Unit)? = null
+        initial: Int
     ) {
         val title = TextView(this).apply {
             text = "$name: $initial%"
             setTextColor(Color.WHITE)
         }
-
         root.addView(title)
 
         val seek = SeekBar(this).apply {
@@ -147,7 +155,10 @@ class MainActivity : Activity() {
                 ) {
                     val value = p + min
                     title.text = "$name: $value%"
-                    onValueChanged?.invoke(value)
+
+                    if (name == "Depth") {
+                        depthValue = value
+                    }
                 }
 
                 override fun onStartTrackingTouch(s: SeekBar?) {}
@@ -158,26 +169,10 @@ class MainActivity : Activity() {
         root.addView(
             seek,
             LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, 48
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                48
             )
         )
-    }
-
-    private fun applyDepth() {
-        val audioPlayer = player ?: return
-
-        try {
-            val pitchFactor = 1.0 - (depthValue / 100.0 * 0.35)
-            audioPlayer.playbackRate = (rate * pitchFactor).toInt()
-
-            runOnUiThread {
-                status.text = "Mic active • Depth: $depthValue%"
-            }
-        } catch (e: Exception) {
-            runOnUiThread {
-                status.text = "Pitch error: ${e.message}"
-            }
-        }
     }
 
     private fun toggle() {
@@ -185,15 +180,15 @@ class MainActivity : Activity() {
             stopAudio()
         } else {
             if (
-                checkSelfPermission(Manifest.permission.RECORD_AUDIO)
-                != PackageManager.PERMISSION_GRANTED
+                checkSelfPermission(Manifest.permission.RECORD_AUDIO) !=
+                PackageManager.PERMISSION_GRANTED
             ) {
                 requestPermissions(
-                    arrayOf(Manifest.permission.RECORD_AUDIO), 10
+                    arrayOf(Manifest.permission.RECORD_AUDIO),
+                    10
                 )
                 return
             }
-
             startAudio()
         }
     }
@@ -234,32 +229,26 @@ class MainActivity : Activity() {
                 throw IllegalStateException("Audio output initialization failed")
             }
 
-            if (NoiseSuppressor.isAvailable()) {
-                noiseSuppressor =
-                    NoiseSuppressor.create(recorder!!.audioSessionId)
-
-                noiseSuppressor?.enabled = true
+            noiseSuppressor?.release()
+            noiseSuppressor = if (
+                NoiseSuppressor.isAvailable()
+            ) {
+                NoiseSuppressor.create(recorder!!.audioSessionId)?.apply {
+                    enabled = true
+                }
+            } else {
+                null
             }
 
             running = true
             recorder?.startRecording()
             player?.play()
 
-            applyDepth()
-
             startButton.text = "STOP MIC MONITOR"
-            status.text = "Mic active • noise suppression enabled"
+            status.text = "Mic active • Phantom pitch processing"
 
             worker = thread(name = "ZaymbesAudio") {
-                val data = ShortArray(bufferSize / 2)
-
-                while (running) {
-                    val n = recorder?.read(data, 0, data.size) ?: 0
-
-                    if (n > 0) {
-                        player?.write(data, 0, n)
-                    }
-                }
+                processMicrophone()
             }
 
         } catch (e: Exception) {
@@ -268,16 +257,117 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun processMicrophone() {
+        val format = TarsosDSPAudioFormat(
+            rate.toFloat(),
+            16,
+            1,
+            true,
+            false
+        )
+
+        val pitchShifter = PitchShifter(
+            0.85,
+            rate.toDouble(),
+            fftSize,
+            overlap
+        )
+
+        val audioEvent = AudioEvent(format)
+        audioEvent.setOverlap(overlap)
+
+        val previousSamples = FloatArray(overlap)
+        val inputSamples = ShortArray(overlap)
+        var firstBlock = true
+
+        while (running) {
+            var totalRead = 0
+
+            while (totalRead < overlap && running) {
+                val count = recorder?.read(
+                    inputSamples,
+                    totalRead,
+                    overlap - totalRead
+                ) ?: -1
+
+                if (count <= 0) {
+                    break
+                }
+                totalRead += count
+            }
+
+            if (!running || totalRead <= 0) {
+                break
+            }
+
+            val block = FloatArray(fftSize)
+
+            for (i in 0 until overlap) {
+                block[i] = previousSamples[i]
+            }
+
+            for (i in 0 until overlap) {
+                block[overlap + i] =
+                    if (i < totalRead) {
+                        inputSamples[i] / 32768.0f
+                    } else {
+                        0f
+                    }
+            }
+
+            val shiftFactor =
+                1.0f - (depthValue / 100.0f) * 0.25f
+
+            pitchShifter.setPitchShiftFactor(shiftFactor)
+
+            audioEvent.setFloatBuffer(block)
+            audioEvent.setOverlap(overlap)
+            pitchShifter.process(audioEvent)
+
+            val processed = audioEvent.floatBuffer
+            val output = ShortArray(overlap)
+
+            for (i in 0 until overlap) {
+                val sample = processed[overlap + i]
+                    .coerceIn(-1.0f, 1.0f)
+
+                output[i] = (sample * 32767.0f).toInt().toShort()
+            }
+
+            if (!firstBlock) {
+                player?.write(output, 0, overlap)
+            } else {
+                firstBlock = false
+            }
+
+            for (i in 0 until overlap) {
+                previousSamples[i] =
+                    if (i < totalRead) {
+                        inputSamples[i] / 32768.0f
+                    } else {
+                        0f
+                    }
+            }
+        }
+    }
+
     private fun stopAudio() {
         running = false
 
         try {
             recorder?.stop()
-        } catch (_: Exception) {}
+        } catch (_: Exception) {
+        }
 
         try {
             player?.stop()
-        } catch (_: Exception) {}
+        } catch (_: Exception) {
+        }
+
+        try {
+            worker?.join(300)
+        } catch (_: InterruptedException) {
+        }
 
         noiseSuppressor?.release()
         noiseSuppressor = null
@@ -298,7 +388,11 @@ class MainActivity : Activity() {
         permissions: Array<out String>,
         results: IntArray
     ) {
-        super.onRequestPermissionsResult(requestCode, permissions, results)
+        super.onRequestPermissionsResult(
+            requestCode,
+            permissions,
+            results
+        )
 
         if (
             requestCode == 10 &&
