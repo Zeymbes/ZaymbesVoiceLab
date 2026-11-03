@@ -18,7 +18,8 @@
         android:maxSdkVersion="30" />
 
     <!-- Bluetooth permission for Android 12 and newer -->
-    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission
+        android:name="android.permission.BLUETOOTH_CONNECT" />
 
     <application
         android:allowBackup="false"
