@@ -1,8 +1,24 @@
+
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- Microphone permissions -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
+    <!-- Audio routing -->
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+
+    <!-- Bluetooth permissions for older Android versions -->
+    <uses-permission
+        android:name="android.permission.BLUETOOTH"
+        android:maxSdkVersion="30" />
+
+    <uses-permission
+        android:name="android.permission.BLUETOOTH_ADMIN"
+        android:maxSdkVersion="30" />
+
+    <!-- Bluetooth permission for Android 12 and newer -->
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
 
     <application
         android:allowBackup="false"
@@ -20,5 +36,7 @@
             </intent-filter>
 
         </activity>
+
     </application>
+
 </manifest>
