@@ -17,11 +17,13 @@ import android.view.Gravity
 import android.view.ViewGroup
 import kotlin.concurrent.thread
 import kotlin.math.max
+import kotlin.math.sqrt
 
 class MainActivity : Activity() {
 
     @Volatile private var running = false
     @Volatile private var depthValue = 55
+    @Volatile private var gateValue = 35
 
     private var recorder: AudioRecord? = null
     private var player: AudioTrack? = null
@@ -90,7 +92,7 @@ class MainActivity : Activity() {
         root.addView(label("Deep • synchronized • ominous", 14f, Color.LTGRAY))
 
         val info = label(
-            "Live microphone monitor • pitch depth active",
+            "Live microphone monitor • noise gate active",
             13f,
             Color.rgb(190, 180, 205)
         )
@@ -127,6 +129,7 @@ class MainActivity : Activity() {
         addSlider(root, "Depth", 0, 100, 55)
         addSlider(root, "Phantom resonance", 0, 100, 25)
         addSlider(root, "Layer blend", 0, 100, 50)
+        addSlider(root, "Noise Gate", 0, 100, 35)
 
         root.addView(
             label(
@@ -169,9 +172,15 @@ class MainActivity : Activity() {
                     val value = p + min
                     title.text = "$name: $value%"
 
-                    if (name == "Depth") {
-                        depthValue = value
-                        updatePlaybackRate()
+                    when (name) {
+                        "Depth" -> {
+                            depthValue = value
+                            updatePlaybackRate()
+                        }
+
+                        "Noise Gate" -> {
+                            gateValue = value
+                        }
                     }
                 }
 
@@ -280,7 +289,7 @@ class MainActivity : Activity() {
             updatePlaybackRate()
 
             startButton.text = "STOP MIC MONITOR"
-            status.text = "Mic active • Phantom God monitoring"
+            status.text = "Mic active • Noise Gate running"
 
             worker = thread(name = "ZaymbesAudio") {
                 processMicrophone()
@@ -295,6 +304,9 @@ class MainActivity : Activity() {
     private fun processMicrophone() {
         val data = ShortArray(bufferSize / 2)
 
+        var envelope = 0f
+        var gateGain = 1f
+
         while (running) {
             val count = recorder?.read(
                 data,
@@ -302,9 +314,51 @@ class MainActivity : Activity() {
                 data.size
             ) ?: -1
 
-            if (count > 0 && running) {
-                player?.write(data, 0, count)
+            if (count <= 0 || !running) {
+                continue
             }
+
+            var sumSquares = 0.0
+
+            for (i in 0 until count) {
+                val sample = data[i].toDouble() / 32768.0
+                sumSquares += sample * sample
+            }
+
+            val rms = sqrt(sumSquares / count).toFloat()
+
+            envelope = envelope * 0.85f + rms * 0.15f
+
+            val threshold =
+                0.002f + (gateValue / 100f) * 0.035f
+
+            val targetGain =
+                if (envelope > threshold) {
+                    1f
+                } else {
+                    0f
+                }
+
+            val attack = 0.35f
+            val release = 0.04f
+
+            gateGain +=
+                if (targetGain > gateGain) {
+                    (targetGain - gateGain) * attack
+                } else {
+                    (targetGain - gateGain) * release
+                }
+
+            for (i in 0 until count) {
+                val sample = data[i] * gateGain
+
+                data[i] = sample
+                    .toInt()
+                    .coerceIn(-32768, 32767)
+                    .toShort()
+            }
+
+            player?.write(data, 0, count)
         }
     }
 
