@@ -1,3 +1,4 @@
+
 package com.zaymbes.voicelab
 
 import android.Manifest
@@ -8,6 +9,7 @@ import android.media.AudioRecord
 import android.media.AudioTrack
 import android.media.MediaRecorder
 import android.media.AudioManager
+import android.media.audiofx.NoiseSuppressor
 import android.os.Bundle
 import android.widget.*
 import android.graphics.Color
@@ -22,12 +24,12 @@ class MainActivity : Activity() {
     private var recorder: AudioRecord? = null
     private var player: AudioTrack? = null
     private var worker: Thread? = null
+    private var noiseSuppressor: NoiseSuppressor? = null
 
     private lateinit var status: TextView
     private lateinit var startButton: Button
 
     private val rate = 44100
-
     private var depthValue = 55
 
     private val bufferSize by lazy {
@@ -43,10 +45,8 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
         window.statusBarColor = Color.rgb(15, 8, 27)
         window.navigationBarColor = Color.rgb(15, 8, 27)
-
         buildUi()
     }
 
@@ -58,43 +58,26 @@ class MainActivity : Activity() {
             setBackgroundColor(Color.rgb(15, 8, 27))
         }
 
-        fun label(
-            text: String,
-            size: Float,
-            color: Int = Color.WHITE
-        ) = TextView(this).apply {
-            this.text = text
-            textSize = size
-            setTextColor(color)
-            gravity = Gravity.CENTER
-        }
+        fun label(text: String, size: Float, color: Int = Color.WHITE) =
+            TextView(this).apply {
+                this.text = text
+                textSize = size
+                setTextColor(color)
+                gravity = Gravity.CENTER
+            }
 
-        root.addView(
-            label("ZAYMBES", 30f, Color.rgb(190, 130, 255))
-        )
-
-        root.addView(
-            label("VOICE LAB  •  PHANTOM GOD", 14f, Color.LTGRAY)
-        )
-
+        root.addView(label("ZAYMBES", 30f, Color.rgb(190, 130, 255)))
+        root.addView(label("VOICE LAB  •  PHANTOM GOD", 14f, Color.LTGRAY))
         root.addView(Space(this), LinearLayout.LayoutParams(1, 30))
-
-        root.addView(
-            label("PRESET", 13f, Color.rgb(170, 130, 220))
-        )
-
+        root.addView(label("PRESET", 13f, Color.rgb(170, 130, 220)))
         root.addView(label("PHANTOM GOD  /  v1", 22f))
-
-        root.addView(
-            label("Deep • synchronized • ominous", 14f, Color.LTGRAY)
-        )
+        root.addView(label("Deep • synchronized • ominous", 14f, Color.LTGRAY))
 
         val info = label(
-            "Prototype: live mic monitor with pitch depth",
+            "Live mic monitor • pitch depth • noise suppression",
             13f,
             Color.rgb(190, 180, 205)
         )
-
         info.setPadding(0, 24, 0, 20)
         root.addView(info)
 
@@ -106,31 +89,22 @@ class MainActivity : Activity() {
         root.addView(
             startButton,
             LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                58
+                ViewGroup.LayoutParams.MATCH_PARENT, 58
             )
         )
 
-        status = label(
-            "Microphone stopped",
-            14f,
-            Color.rgb(190, 130, 255)
-        )
-
+        status = label("Microphone stopped", 14f, Color.rgb(190, 130, 255))
         status.setPadding(0, 20, 0, 20)
         root.addView(status)
 
-        root.addView(
-            label("VOICE CONTROLS", 15f, Color.rgb(190, 130, 255))
-        )
+        root.addView(label("VOICE CONTROLS", 15f, Color.rgb(190, 130, 255)))
 
-        addSlider(root, "Depth", 0, 100, 55) { value ->
-            depthValue = value
+        addSlider(root, "Depth", 0, 100, 55) {
+            depthValue = it
             applyDepth()
         }
 
         addSlider(root, "Phantom resonance", 0, 100, 25)
-
         addSlider(root, "Layer blend", 0, 100, 50)
 
         root.addView(
@@ -166,7 +140,6 @@ class MainActivity : Activity() {
 
         seek.setOnSeekBarChangeListener(
             object : SeekBar.OnSeekBarChangeListener {
-
                 override fun onProgressChanged(
                     s: SeekBar?,
                     p: Int,
@@ -178,7 +151,6 @@ class MainActivity : Activity() {
                 }
 
                 override fun onStartTrackingTouch(s: SeekBar?) {}
-
                 override fun onStopTrackingTouch(s: SeekBar?) {}
             }
         )
@@ -186,8 +158,7 @@ class MainActivity : Activity() {
         root.addView(
             seek,
             LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                48
+                ViewGroup.LayoutParams.MATCH_PARENT, 48
             )
         )
     }
@@ -196,18 +167,12 @@ class MainActivity : Activity() {
         val audioPlayer = player ?: return
 
         try {
-            // Depth 0 = original pitch
-            // Depth 100 = deeper pitch
             val pitchFactor = 1.0 - (depthValue / 100.0 * 0.35)
-
-            val newRate = (rate * pitchFactor).toInt()
-
-            audioPlayer.playbackRate = newRate
+            audioPlayer.playbackRate = (rate * pitchFactor).toInt()
 
             runOnUiThread {
                 status.text = "Mic active • Depth: $depthValue%"
             }
-
         } catch (e: Exception) {
             runOnUiThread {
                 status.text = "Pitch error: ${e.message}"
@@ -224,8 +189,7 @@ class MainActivity : Activity() {
                 != PackageManager.PERMISSION_GRANTED
             ) {
                 requestPermissions(
-                    arrayOf(Manifest.permission.RECORD_AUDIO),
-                    10
+                    arrayOf(Manifest.permission.RECORD_AUDIO), 10
                 )
                 return
             }
@@ -263,38 +227,34 @@ class MainActivity : Activity() {
             )
 
             if (recorder?.state != AudioRecord.STATE_INITIALIZED) {
-                throw IllegalStateException(
-                    "Microphone initialization failed"
-                )
+                throw IllegalStateException("Microphone initialization failed")
             }
 
             if (player?.state != AudioTrack.STATE_INITIALIZED) {
-                throw IllegalStateException(
-                    "Audio output initialization failed"
-                )
+                throw IllegalStateException("Audio output initialization failed")
+            }
+
+            if (NoiseSuppressor.isAvailable()) {
+                noiseSuppressor =
+                    NoiseSuppressor.create(recorder!!.audioSessionId)
+
+                noiseSuppressor?.enabled = true
             }
 
             running = true
-
             recorder?.startRecording()
             player?.play()
 
             applyDepth()
 
             startButton.text = "STOP MIC MONITOR"
-
-            status.text = "Mic active • Phantom God depth enabled"
+            status.text = "Mic active • noise suppression enabled"
 
             worker = thread(name = "ZaymbesAudio") {
-
                 val data = ShortArray(bufferSize / 2)
 
                 while (running) {
-                    val n = recorder?.read(
-                        data,
-                        0,
-                        data.size
-                    ) ?: 0
+                    val n = recorder?.read(data, 0, data.size) ?: 0
 
                     if (n > 0) {
                         player?.write(data, 0, n)
@@ -319,6 +279,9 @@ class MainActivity : Activity() {
             player?.stop()
         } catch (_: Exception) {}
 
+        noiseSuppressor?.release()
+        noiseSuppressor = null
+
         recorder?.release()
         player?.release()
 
@@ -327,7 +290,6 @@ class MainActivity : Activity() {
         worker = null
 
         startButton.text = "START MIC MONITOR"
-
         status.text = "Microphone stopped"
     }
 
@@ -336,11 +298,7 @@ class MainActivity : Activity() {
         permissions: Array<out String>,
         results: IntArray
     ) {
-        super.onRequestPermissionsResult(
-            requestCode,
-            permissions,
-            results
-        )
+        super.onRequestPermissionsResult(requestCode, permissions, results)
 
         if (
             requestCode == 10 &&
