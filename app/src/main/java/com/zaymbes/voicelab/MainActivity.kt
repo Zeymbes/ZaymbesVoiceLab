@@ -15,10 +15,13 @@ import android.content.Context
 import kotlin.concurrent.thread
 import kotlin.math.max
 import kotlin.math.sqrt
+import kotlin.math.sin
+import kotlin.math.PI
 
 class MainActivity : Activity() {
 
     @Volatile private var running = false
+
     @Volatile private var depthValue = 55
     @Volatile private var gateValue = 35
     @Volatile private var resonanceValue = 25
@@ -34,6 +37,11 @@ class MainActivity : Activity() {
     private lateinit var audioManager: AudioManager
 
     private val rate = 44100
+
+    // Pitch engine settings
+    private val pitchBufferSize = 8192
+    private val pitchWindow = 4096
+    private val pitchMinimumDelay = 2
 
     private val bufferSize by lazy {
         max(
@@ -67,6 +75,11 @@ class MainActivity : Activity() {
             setBackgroundColor(Color.rgb(15, 8, 27))
         }
 
+        val scroll = ScrollView(this).apply {
+            addView(root)
+            setBackgroundColor(Color.rgb(15, 8, 27))
+        }
+
         fun label(
             text: String,
             size: Float,
@@ -92,10 +105,16 @@ class MainActivity : Activity() {
             label("PRESET", 13f, Color.rgb(170, 130, 220))
         )
 
-        root.addView(label("PHANTOM GOD / v2", 22f))
+        root.addView(
+            label("PHANTOM GOD / v3", 22f)
+        )
 
         root.addView(
-            label("Deep • Echoing • Ominous", 14f, Color.LTGRAY)
+            label(
+                "Deep • Echoing • Ominous • Pitch Shifted",
+                14f,
+                Color.LTGRAY
+            )
         )
 
         val info = label(
@@ -130,7 +149,11 @@ class MainActivity : Activity() {
         root.addView(status)
 
         root.addView(
-            label("PHANTOM VOICE CONTROLS", 15f, Color.rgb(190, 130, 255))
+            label(
+                "PHANTOM VOICE CONTROLS",
+                15f,
+                Color.rgb(190, 130, 255)
+            )
         )
 
         addSlider(root, "Depth", 0, 100, 55)
@@ -140,7 +163,15 @@ class MainActivity : Activity() {
 
         root.addView(
             label(
-                "Layered Echo • Resonance Feedback",
+                "Real-Time Pitch Engine • Layered Echo",
+                12f,
+                Color.LTGRAY
+            )
+        )
+
+        root.addView(
+            label(
+                "Resonance Feedback • Noise Suppression",
                 12f,
                 Color.LTGRAY
             )
@@ -154,7 +185,7 @@ class MainActivity : Activity() {
             )
         )
 
-        setContentView(root)
+        setContentView(scroll)
     }
 
     private fun addSlider(
@@ -187,12 +218,13 @@ class MainActivity : Activity() {
                 ) {
 
                     val value = p + min
+
                     title.text = "$name: $value%"
 
                     when (name) {
+
                         "Depth" -> {
                             depthValue = value
-                            updatePlaybackRate()
                         }
 
                         "Phantom resonance" -> {
@@ -210,6 +242,7 @@ class MainActivity : Activity() {
                 }
 
                 override fun onStartTrackingTouch(s: SeekBar?) {}
+
                 override fun onStopTrackingTouch(s: SeekBar?) {}
             }
         )
@@ -223,15 +256,95 @@ class MainActivity : Activity() {
         )
     }
 
-    private fun updatePlaybackRate() {
-        try {
-            val depth = depthValue / 100f
-            val playbackRate =
-                (rate * (1f - depth * 0.35f)).toInt()
+    // TRUE PITCH SHIFTING
+    // Changes pitch without changing AudioTrack playback speed.
 
-            player?.playbackRate = playbackRate.coerceAtLeast(8000)
+    private fun readPitchBuffer(
+        buffer: FloatArray,
+        position: Float
+    ): Float {
 
-        } catch (_: Exception) {}
+        val size = buffer.size
+
+        var pos = position
+
+        while (pos < 0f) {
+            pos += size
+        }
+
+        while (pos >= size) {
+            pos -= size
+        }
+
+        val index = pos.toInt()
+        val next = (index + 1) % size
+        val fraction = pos - index
+
+        return buffer[index] * (1f - fraction) +
+                buffer[next] * fraction
+    }
+
+    private fun pitchShift(
+        input: Float,
+        buffer: FloatArray,
+        writePosition: Int,
+        phase: Float,
+        ratio: Float
+    ): Float {
+
+        buffer[writePosition] = input
+
+        val safeRatio = ratio.coerceIn(0.65f, 1f)
+
+        val delayRange =
+            (1f - safeRatio) * pitchWindow
+
+        val phaseOne = phase
+        val phaseTwo =
+            if (phase + 0.5f >= 1f) {
+                phase - 0.5f
+            } else {
+                phase + 0.5f
+            }
+
+        val delayOne =
+            pitchMinimumDelay + phaseOne * delayRange
+
+        val delayTwo =
+            pitchMinimumDelay + phaseTwo * delayRange
+
+        val readOne =
+            writePosition.toFloat() - delayOne
+
+        val readTwo =
+            writePosition.toFloat() - delayTwo
+
+        val weightOne =
+            sin(PI.toFloat() * phaseOne).let {
+                it * it
+            }
+
+        val weightTwo =
+            sin(PI.toFloat() * phaseTwo).let {
+                it * it
+            }
+
+        val sampleOne =
+            readPitchBuffer(buffer, readOne)
+
+        val sampleTwo =
+            readPitchBuffer(buffer, readTwo)
+
+        val totalWeight = weightOne + weightTwo
+
+        return if (totalWeight > 0f) {
+            (
+                sampleOne * weightOne +
+                sampleTwo * weightTwo
+            ) / totalWeight
+        } else {
+            sampleOne
+        }
     }
 
     private fun toggle() {
@@ -245,22 +358,27 @@ class MainActivity : Activity() {
             checkSelfPermission(Manifest.permission.RECORD_AUDIO) !=
             PackageManager.PERMISSION_GRANTED
         ) {
+
             requestPermissions(
                 arrayOf(Manifest.permission.RECORD_AUDIO),
                 10
             )
+
             return
         }
 
         if (
             android.os.Build.VERSION.SDK_INT >= 31 &&
-            checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) !=
-            PackageManager.PERMISSION_GRANTED
+            checkSelfPermission(
+                Manifest.permission.BLUETOOTH_CONNECT
+            ) != PackageManager.PERMISSION_GRANTED
         ) {
+
             requestPermissions(
                 arrayOf(Manifest.permission.BLUETOOTH_CONNECT),
                 20
             )
+
             return
         }
 
@@ -271,7 +389,8 @@ class MainActivity : Activity() {
 
         try {
 
-            audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
+            audioManager.mode =
+                AudioManager.MODE_IN_COMMUNICATION
 
             @Suppress("DEPRECATION")
             audioManager.startBluetoothSco()
@@ -309,29 +428,35 @@ class MainActivity : Activity() {
                 recorder?.state != AudioRecord.STATE_INITIALIZED ||
                 player?.state != AudioTrack.STATE_INITIALIZED
             ) {
-                throw IllegalStateException("Audio initialization failed")
+
+                throw IllegalStateException(
+                    "Audio initialization failed"
+                )
             }
 
             noiseSuppressor?.release()
 
             noiseSuppressor =
                 if (NoiseSuppressor.isAvailable()) {
+
                     NoiseSuppressor.create(
                         recorder!!.audioSessionId
                     )?.apply {
                         enabled = true
                     }
-                } else null
+
+                } else {
+                    null
+                }
 
             running = true
 
             recorder?.startRecording()
             player?.play()
 
-            updatePlaybackRate()
-
             startButton.text = "STOP MIC MONITOR"
-            status.text = "Phantom audio processing active"
+
+            status.text = "Phantom God v3 processing active"
 
             worker = thread(name = "ZaymbesAudio") {
                 processMicrophone()
@@ -340,6 +465,7 @@ class MainActivity : Activity() {
         } catch (e: Exception) {
 
             status.text = "Audio error: ${e.message}"
+
             stopAudio()
         }
     }
@@ -348,10 +474,16 @@ class MainActivity : Activity() {
 
         val data = ShortArray(bufferSize / 2)
 
+        // Noise gate
         var envelope = 0f
         var gateGain = 1f
 
-        // Two independent echo layers.
+        // Pitch engine
+        val pitchBuffer = FloatArray(pitchBufferSize)
+        var pitchWritePosition = 0
+        var pitchPhase = 0f
+
+        // Echo layers
         val delayOne = FloatArray(6000)
         val delayTwo = FloatArray(12000)
 
@@ -360,64 +492,131 @@ class MainActivity : Activity() {
 
         while (running) {
 
-            val count = recorder?.read(data, 0, data.size) ?: -1
+            val count =
+                recorder?.read(data, 0, data.size) ?: -1
 
             if (count <= 0 || !running) continue
+
+            // Calculate microphone volume.
 
             var sumSquares = 0.0
 
             for (i in 0 until count) {
-                val sample = data[i].toDouble() / 32768.0
+
+                val sample =
+                    data[i].toDouble() / 32768.0
+
                 sumSquares += sample * sample
             }
 
-            val rms = sqrt(sumSquares / count).toFloat()
+            val rms =
+                sqrt(sumSquares / count).toFloat()
 
-            envelope = envelope * 0.85f + rms * 0.15f
+            envelope =
+                envelope * 0.85f + rms * 0.15f
+
+            // Noise gate
 
             val gate = gateValue / 100f
-            val threshold = 0.002f + gate * 0.035f
+
+            val threshold =
+                0.002f + gate * 0.035f
 
             val targetGain =
                 if (envelope > threshold) 1f else 0f
 
-            gateGain += if (targetGain > gateGain) {
-                (targetGain - gateGain) * 0.35f
-            } else {
-                (targetGain - gateGain) * 0.04f
-            }
+            gateGain +=
+                if (targetGain > gateGain) {
+                    (targetGain - gateGain) * 0.35f
+                } else {
+                    (targetGain - gateGain) * 0.04f
+                }
 
-            // Read the effect settings for this audio buffer.
-            val resonance = resonanceValue / 100f
-            val blend = layerBlendValue / 100f
+            // Read live effect settings.
 
-            val feedback = resonance * 0.58f
-            val wetMix = blend * 0.65f
+            val depth = depthValue / 100f
+
+            val resonance =
+                resonanceValue / 100f
+
+            val blend =
+                layerBlendValue / 100f
+
+            // Lower pitch while preserving playback speed.
+
+            val pitchRatio =
+                1f - depth * 0.35f
+
+            // Resonance and echo.
+
+            val feedback =
+                resonance * 0.58f
+
+            val wetMix =
+                blend * 0.65f
 
             for (i in 0 until count) {
 
-                val dry = (data[i] / 32768f) * gateGain
+                // Original microphone signal.
 
-                // Read both delayed signals.
-                val echoOne = delayOne[positionOne]
-                val echoTwo = delayTwo[positionTwo]
+                val dry =
+                    (data[i] / 32768f) * gateGain
 
-                // Blend the two echo layers.
-                val combinedEcho = (echoOne + echoTwo) * 0.5f
+                // Apply real-time pitch shifting.
 
-                // Mix the original voice with the echo.
+                val pitched = pitchShift(
+                    dry,
+                    pitchBuffer,
+                    pitchWritePosition,
+                    pitchPhase,
+                    pitchRatio
+                )
+
+                pitchWritePosition++
+
+                if (pitchWritePosition >= pitchBufferSize) {
+                    pitchWritePosition = 0
+                }
+
+                pitchPhase += 1f / pitchWindow
+
+                if (pitchPhase >= 1f) {
+                    pitchPhase -= 1f
+                }
+
+                // Read both echo layers.
+
+                val echoOne =
+                    delayOne[positionOne]
+
+                val echoTwo =
+                    delayTwo[positionTwo]
+
+                // Blend echoes.
+
+                val combinedEcho =
+                    (echoOne + echoTwo) * 0.5f
+
+                // Combine pitched voice and echo.
+
                 val output =
-                    dry * (1f - wetMix) +
+                    pitched * (1f - wetMix) +
                     combinedEcho * wetMix
 
-                // Feed a portion of the echoes back into the delays.
+                // Resonance feedback.
+
                 delayOne[positionOne] =
-                    dry + echoTwo * feedback * 0.25f
+                    pitched +
+                    echoTwo * feedback * 0.25f
 
                 delayTwo[positionTwo] =
-                    dry + echoOne * feedback * 0.25f
+                    pitched +
+                    echoOne * feedback * 0.25f
+
+                // Advance echo positions.
 
                 positionOne++
+
                 positionTwo++
 
                 if (positionOne >= delayOne.size) {
@@ -427,6 +626,8 @@ class MainActivity : Activity() {
                 if (positionTwo >= delayTwo.size) {
                     positionTwo = 0
                 }
+
+                // Safe audio output.
 
                 data[i] = (output * 32767f)
                     .toInt()
@@ -442,8 +643,13 @@ class MainActivity : Activity() {
 
         running = false
 
-        try { recorder?.stop() } catch (_: Exception) {}
-        try { player?.stop() } catch (_: Exception) {}
+        try {
+            recorder?.stop()
+        } catch (_: Exception) {}
+
+        try {
+            player?.stop()
+        } catch (_: Exception) {}
 
         try {
             worker?.join(300)
@@ -460,10 +666,14 @@ class MainActivity : Activity() {
         worker = null
 
         @Suppress("DEPRECATION")
-        audioManager.stopBluetoothSco()
+        try {
+            audioManager.stopBluetoothSco()
+        } catch (_: Exception) {}
 
         @Suppress("DEPRECATION")
-        audioManager.isBluetoothScoOn = false
+        try {
+            audioManager.isBluetoothScoOn = false
+        } catch (_: Exception) {}
 
         audioManager.mode = AudioManager.MODE_NORMAL
 
@@ -490,23 +700,30 @@ class MainActivity : Activity() {
 
         if (
             requestCode == 10 &&
-            results.firstOrNull() == PackageManager.PERMISSION_GRANTED
+            results.firstOrNull() ==
+            PackageManager.PERMISSION_GRANTED
         ) {
+
             toggle()
 
         } else if (
             requestCode == 20 &&
-            results.firstOrNull() == PackageManager.PERMISSION_GRANTED
+            results.firstOrNull() ==
+            PackageManager.PERMISSION_GRANTED
         ) {
+
             startAudio()
 
         } else {
+
             status.text = "Permission denied"
         }
     }
 
     override fun onDestroy() {
+
         stopAudio()
+
         super.onDestroy()
     }
 }
