@@ -11,8 +11,6 @@ import android.widget.*
 import android.graphics.Color
 import android.view.Gravity
 import android.view.ViewGroup
-import android.bluetooth.BluetoothAdapter
-import android.bluetooth.BluetoothProfile
 import android.content.Context
 import kotlin.concurrent.thread
 import kotlin.math.max
@@ -23,6 +21,8 @@ class MainActivity : Activity() {
     @Volatile private var running = false
     @Volatile private var depthValue = 55
     @Volatile private var gateValue = 35
+    @Volatile private var resonanceValue = 25
+    @Volatile private var layerBlendValue = 50
 
     private var recorder: AudioRecord? = null
     private var player: AudioTrack? = null
@@ -31,7 +31,6 @@ class MainActivity : Activity() {
 
     private lateinit var status: TextView
     private lateinit var startButton: Button
-
     private lateinit var audioManager: AudioManager
 
     private val rate = 44100
@@ -50,7 +49,8 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        audioManager =
+            getSystemService(Context.AUDIO_SERVICE) as AudioManager
 
         window.statusBarColor = Color.rgb(15, 8, 27)
         window.navigationBarColor = Color.rgb(15, 8, 27)
@@ -59,6 +59,7 @@ class MainActivity : Activity() {
     }
 
     private fun buildUi() {
+
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
@@ -66,26 +67,43 @@ class MainActivity : Activity() {
             setBackgroundColor(Color.rgb(15, 8, 27))
         }
 
-        fun label(text: String, size: Float, color: Int = Color.WHITE) =
-            TextView(this).apply {
-                this.text = text
-                textSize = size
-                setTextColor(color)
-                gravity = Gravity.CENTER
-            }
+        fun label(
+            text: String,
+            size: Float,
+            color: Int = Color.WHITE
+        ) = TextView(this).apply {
+            this.text = text
+            textSize = size
+            setTextColor(color)
+            gravity = Gravity.CENTER
+        }
 
-        root.addView(label("ZAYMBES", 30f, Color.rgb(190, 130, 255)))
-        root.addView(label("VOICE LAB  •  PHANTOM GOD", 14f, Color.LTGRAY))
+        root.addView(
+            label("ZAYMBES", 30f, Color.rgb(190, 130, 255))
+        )
+
+        root.addView(
+            label("VOICE LAB  •  PHANTOM GOD", 14f, Color.LTGRAY)
+        )
+
         root.addView(Space(this), LinearLayout.LayoutParams(1, 30))
-        root.addView(label("PRESET", 13f, Color.rgb(170, 130, 220)))
-        root.addView(label("PHANTOM GOD / v1", 22f))
-        root.addView(label("Deep • synchronized • ominous", 14f, Color.LTGRAY))
+
+        root.addView(
+            label("PRESET", 13f, Color.rgb(170, 130, 220))
+        )
+
+        root.addView(label("PHANTOM GOD / v2", 22f))
+
+        root.addView(
+            label("Deep • Echoing • Ominous", 14f, Color.LTGRAY)
+        )
 
         val info = label(
-            "Bluetooth microphone • Noise Gate active",
+            "Bluetooth microphone • Phantom effects active",
             13f,
             Color.rgb(190, 180, 205)
         )
+
         info.setPadding(0, 24, 0, 20)
         root.addView(info)
 
@@ -102,23 +120,51 @@ class MainActivity : Activity() {
             )
         )
 
-        status = label("Microphone stopped", 14f, Color.rgb(190, 130, 255))
+        status = label(
+            "Microphone stopped",
+            14f,
+            Color.rgb(190, 130, 255)
+        )
+
         status.setPadding(0, 20, 0, 20)
         root.addView(status)
 
-        root.addView(label("VOICE CONTROLS", 15f, Color.rgb(190, 130, 255)))
+        root.addView(
+            label("PHANTOM VOICE CONTROLS", 15f, Color.rgb(190, 130, 255))
+        )
 
         addSlider(root, "Depth", 0, 100, 55)
         addSlider(root, "Phantom resonance", 0, 100, 25)
         addSlider(root, "Layer blend", 0, 100, 50)
         addSlider(root, "Noise Gate", 0, 100, 35)
 
-        root.addView(label("JLab Bluetooth • Headphones recommended", 12f, Color.LTGRAY))
+        root.addView(
+            label(
+                "Layered Echo • Resonance Feedback",
+                12f,
+                Color.LTGRAY
+            )
+        )
+
+        root.addView(
+            label(
+                "Bluetooth headphones recommended",
+                12f,
+                Color.LTGRAY
+            )
+        )
 
         setContentView(root)
     }
 
-    private fun addSlider(root: LinearLayout, name: String, min: Int, max: Int, initial: Int) {
+    private fun addSlider(
+        root: LinearLayout,
+        name: String,
+        min: Int,
+        max: Int,
+        initial: Int
+    ) {
+
         val title = TextView(this).apply {
             text = "$name: $initial%"
             setTextColor(Color.WHITE)
@@ -131,23 +177,42 @@ class MainActivity : Activity() {
             progress = initial - min
         }
 
-        seek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(s: SeekBar?, p: Int, user: Boolean) {
-                val value = p + min
-                title.text = "$name: $value%"
+        seek.setOnSeekBarChangeListener(
+            object : SeekBar.OnSeekBarChangeListener {
 
-                when (name) {
-                    "Depth" -> {
-                        depthValue = value
-                        updatePlaybackRate()
+                override fun onProgressChanged(
+                    s: SeekBar?,
+                    p: Int,
+                    user: Boolean
+                ) {
+
+                    val value = p + min
+                    title.text = "$name: $value%"
+
+                    when (name) {
+                        "Depth" -> {
+                            depthValue = value
+                            updatePlaybackRate()
+                        }
+
+                        "Phantom resonance" -> {
+                            resonanceValue = value
+                        }
+
+                        "Layer blend" -> {
+                            layerBlendValue = value
+                        }
+
+                        "Noise Gate" -> {
+                            gateValue = value
+                        }
                     }
-                    "Noise Gate" -> gateValue = value
                 }
-            }
 
-            override fun onStartTrackingTouch(s: SeekBar?) {}
-            override fun onStopTrackingTouch(s: SeekBar?) {}
-        })
+                override fun onStartTrackingTouch(s: SeekBar?) {}
+                override fun onStopTrackingTouch(s: SeekBar?) {}
+            }
+        )
 
         root.addView(
             seek,
@@ -161,33 +226,51 @@ class MainActivity : Activity() {
     private fun updatePlaybackRate() {
         try {
             val depth = depthValue / 100f
-            val playbackRate = (rate * (1f - depth * 0.35f)).toInt()
+            val playbackRate =
+                (rate * (1f - depth * 0.35f)).toInt()
+
             player?.playbackRate = playbackRate.coerceAtLeast(8000)
+
         } catch (_: Exception) {}
     }
 
     private fun toggle() {
+
         if (running) {
             stopAudio()
-        } else {
-            if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-                requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 10)
-                return
-            }
-
-            if (android.os.Build.VERSION.SDK_INT >= 31 &&
-                checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED
-            ) {
-                requestPermissions(arrayOf(Manifest.permission.BLUETOOTH_CONNECT), 20)
-                return
-            }
-
-            startAudio()
+            return
         }
+
+        if (
+            checkSelfPermission(Manifest.permission.RECORD_AUDIO) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            requestPermissions(
+                arrayOf(Manifest.permission.RECORD_AUDIO),
+                10
+            )
+            return
+        }
+
+        if (
+            android.os.Build.VERSION.SDK_INT >= 31 &&
+            checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            requestPermissions(
+                arrayOf(Manifest.permission.BLUETOOTH_CONNECT),
+                20
+            )
+            return
+        }
+
+        startAudio()
     }
 
     private fun startAudio() {
+
         try {
+
             audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
 
             @Suppress("DEPRECATION")
@@ -222,7 +305,8 @@ class MainActivity : Activity() {
                 AudioTrack.MODE_STREAM
             )
 
-            if (recorder?.state != AudioRecord.STATE_INITIALIZED ||
+            if (
+                recorder?.state != AudioRecord.STATE_INITIALIZED ||
                 player?.state != AudioTrack.STATE_INITIALIZED
             ) {
                 throw IllegalStateException("Audio initialization failed")
@@ -230,11 +314,14 @@ class MainActivity : Activity() {
 
             noiseSuppressor?.release()
 
-            noiseSuppressor = if (NoiseSuppressor.isAvailable()) {
-                NoiseSuppressor.create(recorder!!.audioSessionId)?.apply {
-                    enabled = true
-                }
-            } else null
+            noiseSuppressor =
+                if (NoiseSuppressor.isAvailable()) {
+                    NoiseSuppressor.create(
+                        recorder!!.audioSessionId
+                    )?.apply {
+                        enabled = true
+                    }
+                } else null
 
             running = true
 
@@ -244,24 +331,35 @@ class MainActivity : Activity() {
             updatePlaybackRate()
 
             startButton.text = "STOP MIC MONITOR"
-            status.text = "Mic active • Bluetooth SCO requested"
+            status.text = "Phantom audio processing active"
 
             worker = thread(name = "ZaymbesAudio") {
                 processMicrophone()
             }
 
         } catch (e: Exception) {
+
             status.text = "Audio error: ${e.message}"
             stopAudio()
         }
     }
 
     private fun processMicrophone() {
+
         val data = ShortArray(bufferSize / 2)
+
         var envelope = 0f
         var gateGain = 1f
 
+        // Two independent echo layers.
+        val delayOne = FloatArray(6000)
+        val delayTwo = FloatArray(12000)
+
+        var positionOne = 0
+        var positionTwo = 0
+
         while (running) {
+
             val count = recorder?.read(data, 0, data.size) ?: -1
 
             if (count <= 0 || !running) continue
@@ -274,11 +372,14 @@ class MainActivity : Activity() {
             }
 
             val rms = sqrt(sumSquares / count).toFloat()
+
             envelope = envelope * 0.85f + rms * 0.15f
 
-            val threshold = 0.002f + (gateValue / 100f) * 0.035f
+            val gate = gateValue / 100f
+            val threshold = 0.002f + gate * 0.035f
 
-            val targetGain = if (envelope > threshold) 1f else 0f
+            val targetGain =
+                if (envelope > threshold) 1f else 0f
 
             gateGain += if (targetGain > gateGain) {
                 (targetGain - gateGain) * 0.35f
@@ -286,8 +387,48 @@ class MainActivity : Activity() {
                 (targetGain - gateGain) * 0.04f
             }
 
+            // Read the effect settings for this audio buffer.
+            val resonance = resonanceValue / 100f
+            val blend = layerBlendValue / 100f
+
+            val feedback = resonance * 0.58f
+            val wetMix = blend * 0.65f
+
             for (i in 0 until count) {
-                data[i] = (data[i] * gateGain)
+
+                val dry = (data[i] / 32768f) * gateGain
+
+                // Read both delayed signals.
+                val echoOne = delayOne[positionOne]
+                val echoTwo = delayTwo[positionTwo]
+
+                // Blend the two echo layers.
+                val combinedEcho = (echoOne + echoTwo) * 0.5f
+
+                // Mix the original voice with the echo.
+                val output =
+                    dry * (1f - wetMix) +
+                    combinedEcho * wetMix
+
+                // Feed a portion of the echoes back into the delays.
+                delayOne[positionOne] =
+                    dry + echoTwo * feedback * 0.25f
+
+                delayTwo[positionTwo] =
+                    dry + echoOne * feedback * 0.25f
+
+                positionOne++
+                positionTwo++
+
+                if (positionOne >= delayOne.size) {
+                    positionOne = 0
+                }
+
+                if (positionTwo >= delayTwo.size) {
+                    positionTwo = 0
+                }
+
+                data[i] = (output * 32767f)
                     .toInt()
                     .coerceIn(-32768, 32767)
                     .toShort()
@@ -298,11 +439,15 @@ class MainActivity : Activity() {
     }
 
     private fun stopAudio() {
+
         running = false
 
         try { recorder?.stop() } catch (_: Exception) {}
         try { player?.stop() } catch (_: Exception) {}
-        try { worker?.join(300) } catch (_: InterruptedException) {}
+
+        try {
+            worker?.join(300)
+        } catch (_: InterruptedException) {}
 
         noiseSuppressor?.release()
         noiseSuppressor = null
@@ -322,8 +467,13 @@ class MainActivity : Activity() {
 
         audioManager.mode = AudioManager.MODE_NORMAL
 
-        startButton.text = "START MIC MONITOR"
-        status.text = "Microphone stopped"
+        if (::startButton.isInitialized) {
+            startButton.text = "START MIC MONITOR"
+        }
+
+        if (::status.isInitialized) {
+            status.text = "Microphone stopped"
+        }
     }
 
     override fun onRequestPermissionsResult(
@@ -331,16 +481,25 @@ class MainActivity : Activity() {
         permissions: Array<out String>,
         results: IntArray
     ) {
-        super.onRequestPermissionsResult(requestCode, permissions, results)
 
-        if (requestCode == 10 &&
+        super.onRequestPermissionsResult(
+            requestCode,
+            permissions,
+            results
+        )
+
+        if (
+            requestCode == 10 &&
             results.firstOrNull() == PackageManager.PERMISSION_GRANTED
         ) {
             toggle()
-        } else if (requestCode == 20 &&
+
+        } else if (
+            requestCode == 20 &&
             results.firstOrNull() == PackageManager.PERMISSION_GRANTED
         ) {
             startAudio()
+
         } else {
             status.text = "Permission denied"
         }
