@@ -3,62 +3,30 @@ package com.zaymbes.voicelab
 
 import android.Manifest
 import android.app.Activity
+import android.content.Intent
 import android.content.pm.PackageManager
-import android.media.*
-import android.media.audiofx.NoiseSuppressor
+import android.os.Build
 import android.os.Bundle
-import android.widget.*
 import android.graphics.Color
 import android.view.Gravity
 import android.view.ViewGroup
+import android.widget.*
 import android.content.Context
-import kotlin.concurrent.thread
-import kotlin.math.max
-import kotlin.math.sqrt
-import kotlin.math.sin
-import kotlin.math.PI
 
 class MainActivity : Activity() {
 
-    @Volatile private var running = false
+    private var serviceActive = false
 
-    @Volatile private var depthValue = 55
-    @Volatile private var gateValue = 35
-    @Volatile private var resonanceValue = 25
-    @Volatile private var layerBlendValue = 50
-
-    private var recorder: AudioRecord? = null
-    private var player: AudioTrack? = null
-    private var noiseSuppressor: NoiseSuppressor? = null
-    private var worker: Thread? = null
+    private var depthValue = 55
+    private var gateValue = 35
+    private var resonanceValue = 25
+    private var layerBlendValue = 50
 
     private lateinit var status: TextView
     private lateinit var startButton: Button
-    private lateinit var audioManager: AudioManager
-
-    private val rate = 44100
-
-    // Pitch engine settings
-    private val pitchBufferSize = 8192
-    private val pitchWindow = 4096
-    private val pitchMinimumDelay = 2
-
-    private val bufferSize by lazy {
-        max(
-            AudioRecord.getMinBufferSize(
-                rate,
-                AudioFormat.CHANNEL_IN_MONO,
-                AudioFormat.ENCODING_PCM_16BIT
-            ),
-            4096
-        )
-    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
-        audioManager =
-            getSystemService(Context.AUDIO_SERVICE) as AudioManager
 
         window.statusBarColor = Color.rgb(15, 8, 27)
         window.navigationBarColor = Color.rgb(15, 8, 27)
@@ -99,14 +67,17 @@ class MainActivity : Activity() {
             label("VOICE LAB  •  PHANTOM GOD", 14f, Color.LTGRAY)
         )
 
-        root.addView(Space(this), LinearLayout.LayoutParams(1, 30))
+        root.addView(
+            Space(this),
+            LinearLayout.LayoutParams(1, 30)
+        )
 
         root.addView(
             label("PRESET", 13f, Color.rgb(170, 130, 220))
         )
 
         root.addView(
-            label("PHANTOM GOD / v3", 22f)
+            label("PHANTOM GOD / v4", 22f)
         )
 
         root.addView(
@@ -118,7 +89,7 @@ class MainActivity : Activity() {
         )
 
         val info = label(
-            "Bluetooth microphone • Phantom effects active",
+            "Foreground Audio Service • Phantom Effects",
             13f,
             Color.rgb(190, 180, 205)
         )
@@ -128,7 +99,9 @@ class MainActivity : Activity() {
 
         startButton = Button(this).apply {
             text = "START MIC MONITOR"
-            setOnClickListener { toggle() }
+            setOnClickListener {
+                toggleService()
+            }
         }
 
         root.addView(
@@ -156,10 +129,10 @@ class MainActivity : Activity() {
             )
         )
 
-        addSlider(root, "Depth", 0, 100, 55)
-        addSlider(root, "Phantom resonance", 0, 100, 25)
-        addSlider(root, "Layer blend", 0, 100, 50)
-        addSlider(root, "Noise Gate", 0, 100, 35)
+        addSlider(root, "Depth", 55)
+        addSlider(root, "Phantom resonance", 25)
+        addSlider(root, "Layer blend", 50)
+        addSlider(root, "Noise Gate", 35)
 
         root.addView(
             label(
@@ -191,8 +164,6 @@ class MainActivity : Activity() {
     private fun addSlider(
         root: LinearLayout,
         name: String,
-        min: Int,
-        max: Int,
         initial: Int
     ) {
 
@@ -204,46 +175,46 @@ class MainActivity : Activity() {
         root.addView(title)
 
         val seek = SeekBar(this).apply {
-            this.max = max - min
-            progress = initial - min
+            max = 100
+            progress = initial
         }
 
         seek.setOnSeekBarChangeListener(
             object : SeekBar.OnSeekBarChangeListener {
 
                 override fun onProgressChanged(
-                    s: SeekBar?,
-                    p: Int,
-                    user: Boolean
+                    seekBar: SeekBar?,
+                    progress: Int,
+                    fromUser: Boolean
                 ) {
 
-                    val value = p + min
-
-                    title.text = "$name: $value%"
+                    title.text = "$name: $progress%"
 
                     when (name) {
+                        "Depth" -> depthValue = progress
 
-                        "Depth" -> {
-                            depthValue = value
-                        }
+                        "Phantom resonance" ->
+                            resonanceValue = progress
 
-                        "Phantom resonance" -> {
-                            resonanceValue = value
-                        }
+                        "Layer blend" ->
+                            layerBlendValue = progress
 
-                        "Layer blend" -> {
-                            layerBlendValue = value
-                        }
+                        "Noise Gate" ->
+                            gateValue = progress
+                    }
 
-                        "Noise Gate" -> {
-                            gateValue = value
-                        }
+                    if (serviceActive && fromUser) {
+                        sendAudioSettings()
                     }
                 }
 
-                override fun onStartTrackingTouch(s: SeekBar?) {}
+                override fun onStartTrackingTouch(
+                    seekBar: SeekBar?
+                ) {}
 
-                override fun onStopTrackingTouch(s: SeekBar?) {}
+                override fun onStopTrackingTouch(
+                    seekBar: SeekBar?
+                ) {}
             }
         )
 
@@ -256,107 +227,17 @@ class MainActivity : Activity() {
         )
     }
 
-    // TRUE PITCH SHIFTING
-    // Changes pitch without changing AudioTrack playback speed.
+    private fun toggleService() {
 
-    private fun readPitchBuffer(
-        buffer: FloatArray,
-        position: Float
-    ): Float {
-
-        val size = buffer.size
-
-        var pos = position
-
-        while (pos < 0f) {
-            pos += size
-        }
-
-        while (pos >= size) {
-            pos -= size
-        }
-
-        val index = pos.toInt()
-        val next = (index + 1) % size
-        val fraction = pos - index
-
-        return buffer[index] * (1f - fraction) +
-                buffer[next] * fraction
-    }
-
-    private fun pitchShift(
-        input: Float,
-        buffer: FloatArray,
-        writePosition: Int,
-        phase: Float,
-        ratio: Float
-    ): Float {
-
-        buffer[writePosition] = input
-
-        val safeRatio = ratio.coerceIn(0.65f, 1f)
-
-        val delayRange =
-            (1f - safeRatio) * pitchWindow
-
-        val phaseOne = phase
-        val phaseTwo =
-            if (phase + 0.5f >= 1f) {
-                phase - 0.5f
-            } else {
-                phase + 0.5f
-            }
-
-        val delayOne =
-            pitchMinimumDelay + phaseOne * delayRange
-
-        val delayTwo =
-            pitchMinimumDelay + phaseTwo * delayRange
-
-        val readOne =
-            writePosition.toFloat() - delayOne
-
-        val readTwo =
-            writePosition.toFloat() - delayTwo
-
-        val weightOne =
-            sin(PI.toFloat() * phaseOne).let {
-                it * it
-            }
-
-        val weightTwo =
-            sin(PI.toFloat() * phaseTwo).let {
-                it * it
-            }
-
-        val sampleOne =
-            readPitchBuffer(buffer, readOne)
-
-        val sampleTwo =
-            readPitchBuffer(buffer, readTwo)
-
-        val totalWeight = weightOne + weightTwo
-
-        return if (totalWeight > 0f) {
-            (
-                sampleOne * weightOne +
-                sampleTwo * weightTwo
-            ) / totalWeight
-        } else {
-            sampleOne
-        }
-    }
-
-    private fun toggle() {
-
-        if (running) {
-            stopAudio()
+        if (serviceActive) {
+            stopAudioService()
             return
         }
 
         if (
-            checkSelfPermission(Manifest.permission.RECORD_AUDIO) !=
-            PackageManager.PERMISSION_GRANTED
+            checkSelfPermission(
+                Manifest.permission.RECORD_AUDIO
+            ) != PackageManager.PERMISSION_GRANTED
         ) {
 
             requestPermissions(
@@ -367,363 +248,133 @@ class MainActivity : Activity() {
             return
         }
 
-        if (
-            android.os.Build.VERSION.SDK_INT >= 31 &&
-            checkSelfPermission(
-                Manifest.permission.BLUETOOTH_CONNECT
-            ) != PackageManager.PERMISSION_GRANTED
-        ) {
-
-            requestPermissions(
-                arrayOf(Manifest.permission.BLUETOOTH_CONNECT),
-                20
-            )
-
-            return
-        }
-
-        startAudio()
+        startAudioService()
     }
 
-    private fun startAudio() {
+    private fun startAudioService() {
 
         try {
 
-            audioManager.mode =
-                AudioManager.MODE_IN_COMMUNICATION
-
-            @Suppress("DEPRECATION")
-            audioManager.startBluetoothSco()
-
-            @Suppress("DEPRECATION")
-            audioManager.isBluetoothScoOn = true
-
-            val outBuffer = max(
-                AudioTrack.getMinBufferSize(
-                    rate,
-                    AudioFormat.CHANNEL_OUT_MONO,
-                    AudioFormat.ENCODING_PCM_16BIT
-                ),
-                4096
-            )
-
-            recorder = AudioRecord(
-                MediaRecorder.AudioSource.VOICE_COMMUNICATION,
-                rate,
-                AudioFormat.CHANNEL_IN_MONO,
-                AudioFormat.ENCODING_PCM_16BIT,
-                bufferSize
-            )
-
-            player = AudioTrack(
-                AudioManager.STREAM_VOICE_CALL,
-                rate,
-                AudioFormat.CHANNEL_OUT_MONO,
-                AudioFormat.ENCODING_PCM_16BIT,
-                outBuffer,
-                AudioTrack.MODE_STREAM
-            )
-
-            if (
-                recorder?.state != AudioRecord.STATE_INITIALIZED ||
-                player?.state != AudioTrack.STATE_INITIALIZED
-            ) {
-
-                throw IllegalStateException(
-                    "Audio initialization failed"
-                )
+            val intent = Intent(
+                this,
+                AudioService::class.java
+            ).apply {
+                action = AudioService.ACTION_START
             }
 
-            noiseSuppressor?.release()
+            if (Build.VERSION.SDK_INT >= 26) {
+                startForegroundService(intent)
+            } else {
+                startService(intent)
+            }
 
-            noiseSuppressor =
-                if (NoiseSuppressor.isAvailable()) {
+            serviceActive = true
 
-                    NoiseSuppressor.create(
-                        recorder!!.audioSessionId
-                    )?.apply {
-                        enabled = true
-                    }
-
-                } else {
-                    null
-                }
-
-            running = true
-
-            recorder?.startRecording()
-            player?.play()
+            sendAudioSettings()
 
             startButton.text = "STOP MIC MONITOR"
-
-            status.text = "Phantom God v3 processing active"
-
-            worker = thread(name = "ZaymbesAudio") {
-                processMicrophone()
-            }
+            status.text = "Phantom God V4 starting..."
 
         } catch (e: Exception) {
 
-            status.text = "Audio error: ${e.message}"
+            serviceActive = false
 
-            stopAudio()
-        }
-    }
-
-    private fun processMicrophone() {
-
-        val data = ShortArray(bufferSize / 2)
-
-        // Noise gate
-        var envelope = 0f
-        var gateGain = 1f
-
-        // Pitch engine
-        val pitchBuffer = FloatArray(pitchBufferSize)
-        var pitchWritePosition = 0
-        var pitchPhase = 0f
-
-        // Echo layers
-        val delayOne = FloatArray(6000)
-        val delayTwo = FloatArray(12000)
-
-        var positionOne = 0
-        var positionTwo = 0
-
-        while (running) {
-
-            val count =
-                recorder?.read(data, 0, data.size) ?: -1
-
-            if (count <= 0 || !running) continue
-
-            // Calculate microphone volume.
-
-            var sumSquares = 0.0
-
-            for (i in 0 until count) {
-
-                val sample =
-                    data[i].toDouble() / 32768.0
-
-                sumSquares += sample * sample
-            }
-
-            val rms =
-                sqrt(sumSquares / count).toFloat()
-
-            envelope =
-                envelope * 0.85f + rms * 0.15f
-
-            // Noise gate
-
-            val gate = gateValue / 100f
-
-            val threshold =
-                0.002f + gate * 0.035f
-
-            val targetGain =
-                if (envelope > threshold) 1f else 0f
-
-            gateGain +=
-                if (targetGain > gateGain) {
-                    (targetGain - gateGain) * 0.35f
-                } else {
-                    (targetGain - gateGain) * 0.04f
-                }
-
-            // Read live effect settings.
-
-            val depth = depthValue / 100f
-
-            val resonance =
-                resonanceValue / 100f
-
-            val blend =
-                layerBlendValue / 100f
-
-            // Lower pitch while preserving playback speed.
-
-            val pitchRatio =
-                1f - depth * 0.35f
-
-            // Resonance and echo.
-
-            val feedback =
-                resonance * 0.58f
-
-            val wetMix =
-                blend * 0.65f
-
-            for (i in 0 until count) {
-
-                // Original microphone signal.
-
-                val dry =
-                    (data[i] / 32768f) * gateGain
-
-                // Apply real-time pitch shifting.
-
-                val pitched = pitchShift(
-                    dry,
-                    pitchBuffer,
-                    pitchWritePosition,
-                    pitchPhase,
-                    pitchRatio
-                )
-
-                pitchWritePosition++
-
-                if (pitchWritePosition >= pitchBufferSize) {
-                    pitchWritePosition = 0
-                }
-
-                pitchPhase += 1f / pitchWindow
-
-                if (pitchPhase >= 1f) {
-                    pitchPhase -= 1f
-                }
-
-                // Read both echo layers.
-
-                val echoOne =
-                    delayOne[positionOne]
-
-                val echoTwo =
-                    delayTwo[positionTwo]
-
-                // Blend echoes.
-
-                val combinedEcho =
-                    (echoOne + echoTwo) * 0.5f
-
-                // Combine pitched voice and echo.
-
-                val output =
-                    pitched * (1f - wetMix) +
-                    combinedEcho * wetMix
-
-                // Resonance feedback.
-
-                delayOne[positionOne] =
-                    pitched +
-                    echoTwo * feedback * 0.25f
-
-                delayTwo[positionTwo] =
-                    pitched +
-                    echoOne * feedback * 0.25f
-
-                // Advance echo positions.
-
-                positionOne++
-
-                positionTwo++
-
-                if (positionOne >= delayOne.size) {
-                    positionOne = 0
-                }
-
-                if (positionTwo >= delayTwo.size) {
-                    positionTwo = 0
-                }
-
-                // Safe audio output.
-
-                data[i] = (output * 32767f)
-                    .toInt()
-                    .coerceIn(-32768, 32767)
-                    .toShort()
-            }
-
-            player?.write(data, 0, count)
-        }
-    }
-
-    private fun stopAudio() {
-
-        running = false
-
-        try {
-            recorder?.stop()
-        } catch (_: Exception) {}
-
-        try {
-            player?.stop()
-        } catch (_: Exception) {}
-
-        try {
-            worker?.join(300)
-        } catch (_: InterruptedException) {}
-
-        noiseSuppressor?.release()
-        noiseSuppressor = null
-
-        recorder?.release()
-        player?.release()
-
-        recorder = null
-        player = null
-        worker = null
-
-        @Suppress("DEPRECATION")
-        try {
-            audioManager.stopBluetoothSco()
-        } catch (_: Exception) {}
-
-        @Suppress("DEPRECATION")
-        try {
-            audioManager.isBluetoothScoOn = false
-        } catch (_: Exception) {}
-
-        audioManager.mode = AudioManager.MODE_NORMAL
-
-        if (::startButton.isInitialized) {
+            status.text = "Service error: ${e.message}"
             startButton.text = "START MIC MONITOR"
         }
+    }
 
-        if (::status.isInitialized) {
-            status.text = "Microphone stopped"
+    private fun sendAudioSettings() {
+
+        if (!serviceActive) return
+
+        val intent = Intent(
+            this,
+            AudioService::class.java
+        ).apply {
+
+            action = AudioService.ACTION_UPDATE
+
+            putExtra(
+                AudioService.EXTRA_DEPTH,
+                depthValue
+            )
+
+            putExtra(
+                AudioService.EXTRA_GATE,
+                gateValue
+            )
+
+            putExtra(
+                AudioService.EXTRA_RESONANCE,
+                resonanceValue
+            )
+
+            putExtra(
+                AudioService.EXTRA_BLEND,
+                layerBlendValue
+            )
         }
+
+        try {
+            startService(intent)
+        } catch (e: Exception) {
+            android.util.Log.e(
+                "ZaymbesVoiceLab",
+                "Settings update failed",
+                e
+            )
+        }
+    }
+
+    private fun stopAudioService() {
+
+        val intent = Intent(
+            this,
+            AudioService::class.java
+        ).apply {
+            action = AudioService.ACTION_STOP
+        }
+
+        try {
+            startService(intent)
+        } catch (e: Exception) {
+            android.util.Log.e(
+                "ZaymbesVoiceLab",
+                "Service stop failed",
+                e
+            )
+        }
+
+        serviceActive = false
+
+        startButton.text = "START MIC MONITOR"
+        status.text = "Microphone stopped"
     }
 
     override fun onRequestPermissionsResult(
         requestCode: Int,
         permissions: Array<out String>,
-        results: IntArray
+        grantResults: IntArray
     ) {
 
         super.onRequestPermissionsResult(
             requestCode,
             permissions,
-            results
+            grantResults
         )
 
         if (
             requestCode == 10 &&
-            results.firstOrNull() ==
+            grantResults.firstOrNull() ==
             PackageManager.PERMISSION_GRANTED
         ) {
 
-            toggle()
-
-        } else if (
-            requestCode == 20 &&
-            results.firstOrNull() ==
-            PackageManager.PERMISSION_GRANTED
-        ) {
-
-            startAudio()
+            startAudioService()
 
         } else {
 
-            status.text = "Permission denied"
+            status.text = "Microphone permission denied"
         }
-    }
-
-    override fun onDestroy() {
-
-        stopAudio()
-
-        super.onDestroy()
     }
 }
