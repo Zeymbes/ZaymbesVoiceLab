@@ -11,9 +11,12 @@ import android.graphics.Color
 import android.view.Gravity
 import android.view.ViewGroup
 import android.widget.*
-import android.content.Context
 
 class MainActivity : Activity() {
+
+    companion object {
+        private const val PERMISSION_REQUEST_CODE = 10
+    }
 
     private var serviceActive = false
 
@@ -99,6 +102,7 @@ class MainActivity : Activity() {
 
         startButton = Button(this).apply {
             text = "START MIC MONITOR"
+
             setOnClickListener {
                 toggleService()
             }
@@ -191,7 +195,8 @@ class MainActivity : Activity() {
                     title.text = "$name: $progress%"
 
                     when (name) {
-                        "Depth" -> depthValue = progress
+                        "Depth" ->
+                            depthValue = progress
 
                         "Phantom resonance" ->
                             resonanceValue = progress
@@ -234,15 +239,41 @@ class MainActivity : Activity() {
             return
         }
 
+        requestRequiredPermissions()
+    }
+
+    private fun requestRequiredPermissions() {
+
+        val permissionsToRequest = mutableListOf<String>()
+
         if (
             checkSelfPermission(
                 Manifest.permission.RECORD_AUDIO
             ) != PackageManager.PERMISSION_GRANTED
         ) {
+            permissionsToRequest.add(
+                Manifest.permission.RECORD_AUDIO
+            )
+        }
+
+        if (
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+            checkSelfPermission(
+                Manifest.permission.BLUETOOTH_CONNECT
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            permissionsToRequest.add(
+                Manifest.permission.BLUETOOTH_CONNECT
+            )
+        }
+
+        if (permissionsToRequest.isNotEmpty()) {
+
+            status.text = "Requesting permissions..."
 
             requestPermissions(
-                arrayOf(Manifest.permission.RECORD_AUDIO),
-                10
+                permissionsToRequest.toTypedArray(),
+                PERMISSION_REQUEST_CODE
             )
 
             return
@@ -262,7 +293,7 @@ class MainActivity : Activity() {
                 action = AudioService.ACTION_START
             }
 
-            if (Build.VERSION.SDK_INT >= 26) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 startForegroundService(intent)
             } else {
                 startService(intent)
@@ -279,8 +310,14 @@ class MainActivity : Activity() {
 
             serviceActive = false
 
-            status.text = "Service error: ${e.message}"
             startButton.text = "START MIC MONITOR"
+            status.text = "Service error: ${e.message}"
+
+            android.util.Log.e(
+                "ZaymbesVoiceLab",
+                "Audio service startup failed",
+                e
+            )
         }
     }
 
@@ -317,8 +354,11 @@ class MainActivity : Activity() {
         }
 
         try {
+
             startService(intent)
+
         } catch (e: Exception) {
+
             android.util.Log.e(
                 "ZaymbesVoiceLab",
                 "Settings update failed",
@@ -337,8 +377,11 @@ class MainActivity : Activity() {
         }
 
         try {
+
             startService(intent)
+
         } catch (e: Exception) {
+
             android.util.Log.e(
                 "ZaymbesVoiceLab",
                 "Service stop failed",
@@ -364,17 +407,47 @@ class MainActivity : Activity() {
             grantResults
         )
 
-        if (
-            requestCode == 10 &&
-            grantResults.firstOrNull() ==
-            PackageManager.PERMISSION_GRANTED
-        ) {
+        if (requestCode != PERMISSION_REQUEST_CODE) {
+            return
+        }
 
-            startAudioService()
+        var microphoneGranted = false
+        var bluetoothGranted = true
 
-        } else {
+        for (i in permissions.indices) {
+
+            val granted =
+                grantResults.getOrNull(i) ==
+                    PackageManager.PERMISSION_GRANTED
+
+            when (permissions[i]) {
+
+                Manifest.permission.RECORD_AUDIO -> {
+                    microphoneGranted = granted
+                }
+
+                Manifest.permission.BLUETOOTH_CONNECT -> {
+                    bluetoothGranted = granted
+                }
+            }
+        }
+
+        if (!microphoneGranted) {
 
             status.text = "Microphone permission denied"
+            startButton.text = "START MIC MONITOR"
+
+            return
         }
+
+        if (
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+            !bluetoothGranted
+        ) {
+            status.text =
+                "Bluetooth permission denied. Starting without Bluetooth routing."
+        }
+
+        startAudioService()
     }
 }
