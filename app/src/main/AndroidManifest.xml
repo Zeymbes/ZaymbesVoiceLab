@@ -1,9 +1,14 @@
+
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- Microphone -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
+    <!-- Audio configuration -->
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
 
+    <!-- Bluetooth compatibility -->
     <uses-permission
         android:name="android.permission.BLUETOOTH"
         android:maxSdkVersion="30" />
@@ -12,14 +17,19 @@
         android:name="android.permission.BLUETOOTH_ADMIN"
         android:maxSdkVersion="30" />
 
-    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission
+        android:name="android.permission.BLUETOOTH_CONNECT" />
 
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <!-- Foreground service -->
+    <uses-permission
+        android:name="android.permission.FOREGROUND_SERVICE" />
 
     <uses-permission
         android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
 
-    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Notifications -->
+    <uses-permission
+        android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
         android:allowBackup="false"
